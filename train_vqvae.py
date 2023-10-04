@@ -14,13 +14,29 @@ from vqvae import VQVAE
 from scheduler import CycleScheduler
 import distributed as dist
 
+from models import FilterLow
 
-def train(epoch, loader, model, optimizer, scheduler, device):
+
+def train(epoch, loader, model, optimizer, scheduler, device, kernel_size, gaussian, sample_folder_name):
     if dist.is_primary():
         loader = tqdm(loader)
 
     criterion = nn.MSELoss()
-
+    pixel_loss = nn.L1Loss()
+    # color_filter = FilterLow(recursions=recursions, stride=stride, kernel_size=kernel_size, padding=False,gaussian=gaussian)
+    
+    if gaussian == "False":
+        gaussian = False
+    elif gaussian == "True":
+        gaussian = True
+        
+    color_filter = FilterLow(kernel_size=kernel_size, gaussian=gaussian, include_pad=False)
+    
+    if torch.cuda.is_available():
+        pixel_loss = pixel_loss.cuda()
+        color_filter = color_filter.cuda()  
+    
+    
     latent_loss_weight = 0.25
     sample_size = 25
 
@@ -34,9 +50,14 @@ def train(epoch, loader, model, optimizer, scheduler, device):
 
         out, latent_loss = model(img)
         recon_loss = criterion(out, img) # MSE loss
+        
         # ここに色損失を追加する
+        # 入力と出力にローパスフィルタをかけてそれらのMSEを取る
+        color_loss = pixel_loss(color_filter(out), color_filter(img))
+        
+        
         latent_loss = latent_loss.mean() # 量子化损失
-        loss = recon_loss + latent_loss_weight * latent_loss
+        loss = recon_loss + latent_loss_weight * latent_loss + color_loss
         loss.backward()
 
         if scheduler is not None:
@@ -59,6 +80,7 @@ def train(epoch, loader, model, optimizer, scheduler, device):
                 (
                     f"epoch: {epoch + 1}; mse: {recon_loss.item():.5f}; "
                     f"latent: {latent_loss.item():.3f}; avg mse: {mse_sum / mse_n:.5f}; "
+                    f"colorloss: {color_loss.item():.3f}; "
                     f"lr: {lr:.5f}"
                 )
             )
@@ -71,9 +93,13 @@ def train(epoch, loader, model, optimizer, scheduler, device):
                 with torch.no_grad():
                     out, _ = model(sample)
 
+                # フォルダが存在しない場合に作成する
+                folder_path = f"sample/{sample_folder_name}"
+                os.makedirs(folder_path, exist_ok=True)
+                
                 utils.save_image(
                     torch.cat([sample, out], 0),
-                    f"sample/{str(epoch + 1).zfill(5)}_{str(i).zfill(5)}.png",
+                    f"sample/{sample_folder_name}/{str(epoch + 1).zfill(5)}_{str(i).zfill(5)}.png",
                     nrow=sample_size,
                     normalize=True,
                     range=(-1, 1),
@@ -123,10 +149,12 @@ def main(args):
         )
 
     for i in range(args.epoch):
-        train(i, loader, model, optimizer, scheduler, device)
+        train(i, loader, model, optimizer, scheduler, device, args.kernel_size, args.gaussian, args.sample)
 
         if dist.is_primary():
-            torch.save(model.state_dict(), f"checkpoint/vqvae_{str(i + 1).zfill(3)}.pt")
+            folder_path = f"checkpoint/{args.checkpoint}"
+            os.makedirs(folder_path, exist_ok=True)
+            torch.save(model.state_dict(), f"checkpoint/{args.checkpoint}/vqvae_{str(i + 1).zfill(3)}.pt")
 
 
 if __name__ == "__main__":
@@ -144,7 +172,11 @@ if __name__ == "__main__":
     parser.add_argument("--epoch", type=int, default=560)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--sched", type=str)
-    parser.add_argument("path", type=str)
+    parser.add_argument("--path", type=str)
+    parser.add_argument("--gaussian", type=str, default="False")
+    parser.add_argument("--kernel_size", type=int, default=5)
+    parser.add_argument("--checkpoint", type=str)
+    parser.add_argument("--sample", type=str)
 
     args = parser.parse_args()
 
