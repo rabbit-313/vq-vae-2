@@ -41,7 +41,7 @@ class FilterLow(nn.Module):
         else:
             pad = 0
         if gaussian:
-            self.filter = GaussianFilter(kernel_size=kernel_size, gaussian=gaussian, include_pad=False)
+            self.filter = GaussianFilter(kernel_size=kernel_size, stride=stride, padding=pad)
         else:
             self.filter = nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=pad, count_include_pad=include_pad)
         self.recursions = recursions
