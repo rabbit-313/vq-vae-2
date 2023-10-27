@@ -50,3 +50,5 @@ Note: This is a training sample
 - 訓練とテストの詳細はそれぞれ，test.sh，train.sh に書かれています．
 - checkpoint に訓練したモデルが保存されています．
 - 4 万 5000 枚の Imagenet の画像で 1epoch〜560epoch まで訓練したモデルが保存されています．
+  test
+  test
